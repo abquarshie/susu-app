@@ -4,10 +4,13 @@ import { correctPayment, reversePayout, savePayment, savePayout, saveWeek } from
 import { EPS, METHODS, fmtNum, formatDate, isoDay, money, parseDisplayDate, parseIsoDay } from "@/lib/format";
 import type { MemberView, PaymentView, PayoutView, View } from "@/lib/view";
 import { Dialog, DialogButtons } from "./Dialog";
+import { Icon } from "./icons";
 import { useAction, useToast } from "./Toaster";
+import { Avatar, Bar, PageHead } from "./ui";
 
 const MODES = ["This week", "Single payment", "Payout", "Correction"] as const;
 type Mode = (typeof MODES)[number];
+const SHORT: Partial<Record<Mode, string>> = { "Single payment": "Payment" };
 
 const paidAmt = (m: MemberView, w: number) => m.amounts[w - 1] ?? 0;
 const isPaid = (m: MemberView, w: number) => paidAmt(m, w) >= m.weekly - EPS;
@@ -17,10 +20,13 @@ const pad = (w: number) => String(w).padStart(2, "0");
 export function RecordPanel({ view, payments, payouts }: { view: View; payments: PaymentView[]; payouts: PayoutView[] }) {
   const [mode, setMode] = useState<Mode>("This week");
   return (
-    <>
+    <div className="stack">
+      <PageHead title="Record" sub="Contributions, payouts and corrections. Every save is logged with your name." />
       <div className="seg" role="group" aria-label="What to record">
         {MODES.map((m) => (
-          <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>{m}</button>
+          <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
+            <span className="max-sm:hidden">{m}</span><span className="sm:hidden">{SHORT[m] ?? m}</span>
+          </button>
         ))}
       </div>
       <section className="card">
@@ -29,14 +35,13 @@ export function RecordPanel({ view, payments, payouts }: { view: View; payments:
         {mode === "Payout" && <PayoutForm view={view} />}
         {mode === "Correction" && <CorrectionForm view={view} payments={payments} payouts={payouts} />}
       </section>
-    </>
+    </div>
   );
 }
 
 function MethodSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <label className="f">Method
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
+    <label className="field"><span>Method</span><select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
         {METHODS.map((m) => <option key={m}>{m}</option>)}
       </select>
     </label>
@@ -50,13 +55,12 @@ function WeekForm({ view }: { view: View }) {
   const [date, setDate] = useState(view.today);
   return (
     <div className="stack">
-      <div className="grid3">
-        <label className="f">Week
-          <input type="number" min={1} max={view.weeks} value={week}
+      <div className="form-grid three">
+        <label className="field"><span>Week</span><input className="input" type="number" min={1} max={view.weeks} value={week}
             onChange={(e) => setWeek(Math.min(view.weeks, Math.max(1, Math.trunc(Number(e.target.value) || 1))))} />
         </label>
         <MethodSelect value={method} onChange={setMethod} />
-        <label className="f">Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label className="field"><span>Date</span><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
       </div>
       {/* keyed on week + rev so the ticks reset to what is recorded whenever either changes */}
       <WeekTicks key={`${week}-${view.rev}`} view={view} week={week} method={method} date={date} />
@@ -78,18 +82,30 @@ function WeekTicks({ view, week, method, date }: { view: View; week: number; met
 
   return (
     <>
-      <div className="grid2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold">Who paid in week {week}?</span>
+        <span className="pill accent">{members.filter((m) => ticks[m.id]).length} of {members.length} ticked</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
         {members.map((m) => {
           const have = paidAmt(m, week);
           return (
-            <label className="check" key={m.id}>
-              <input type="checkbox" checked={!!ticks[m.id]} onChange={(e) => setTicks((t) => ({ ...t, [m.id]: e.target.checked }))} />
-              <span>{m.name} · GHS {fmtNum(m.weekly)}{have > 0 && have < m.weekly - EPS && <span className="muted"> · GHS {fmtNum(have)} so far</span>}</span>
+            <label key={m.id}
+              className="flex cursor-pointer items-center gap-3 rounded-xl border border-line bg-surface p-3 transition-colors hover:bg-subtle has-checked:border-in has-checked:bg-in-soft">
+              <Avatar name={m.name} tone={ticks[m.id] ? "in" : "muted"} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold">{m.name}</span>
+                <span className="num block text-xs text-muted">
+                  GHS {fmtNum(m.weekly)}{have > 0 && have < m.weekly - EPS && <> · GHS {fmtNum(have)} so far</>}
+                </span>
+              </span>
+              <input type="checkbox" className="size-5 flex-none cursor-pointer accent-in" checked={!!ticks[m.id]}
+                onChange={(e) => setTicks((t) => ({ ...t, [m.id]: e.target.checked }))} />
             </label>
           );
         })}
       </div>
-      <button className="btn primary wide" disabled={pending}
+      <button className="btn primary big wide" disabled={pending}
         onClick={() => (unpaid.length ? setConfirm(true) : paid.length ? save() : toast("No changes to save", "warning"))}>
         {pending ? "Saving…" : `Save week ${week}`}
       </button>
@@ -111,18 +127,19 @@ function PaymentForm({ view }: { view: View }) {
   const suggested = already < m.weekly ? money(m.weekly - already) : m.weekly;
   return (
     <div className="stack">
-      <div className="grid2">
-        <label className="f">Member
-          <select value={memberId} onChange={(e) => setMemberId(e.target.value)}>
+      <div className="form-grid">
+        <label className="field"><span>Member</span><select className="input" value={memberId} onChange={(e) => setMemberId(e.target.value)}>
             {view.members.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </select>
         </label>
-        <label className="f">Week
-          <input type="number" min={1} max={view.weeks} value={week}
+        <label className="field"><span>Week</span><input className="input" type="number" min={1} max={view.weeks} value={week}
             onChange={(e) => setWeek(Math.min(view.weeks, Math.max(1, Math.trunc(Number(e.target.value) || 1))))} />
         </label>
       </div>
-      <p className="caption">Week {week} target GHS {fmtNum(m.weekly)} · already recorded GHS {fmtNum(already)}</p>
+      <div className="grid grid-cols-2 gap-2 rounded-2xl bg-subtle p-3 text-sm">
+        <div><div className="text-xs text-muted">Week {week} target</div><div className="num font-bold">GHS {fmtNum(m.weekly)}</div></div>
+        <div><div className="text-xs text-muted">Already recorded</div><div className="num font-bold">GHS {fmtNum(already)}</div></div>
+      </div>
       <PaymentFields key={`${m.id}-${week}-${view.rev}`} view={view} member={m} week={week} suggested={suggested} />
     </div>
   );
@@ -137,15 +154,14 @@ function PaymentFields({ view, member, week, suggested }: { view: View; member: 
   const toast = useToast();
   return (
     <>
-      <div className="grid2">
-        <label className="f">Amount received (GHS)
-          <input type="number" min={0} step={10} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <div className="form-grid">
+        <label className="field sm:col-span-2"><span>Amount received (GHS)</span><input className="input big" type="number" min={0} step={10} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </label>
         <MethodSelect value={method} onChange={setMethod} />
-        <label className="f">Reference<input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" maxLength={120} /></label>
-        <label className="f">Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label className="field"><span>Reference</span><input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" maxLength={120} /></label>
+        <label className="field"><span>Date</span><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
       </div>
-      <button className="btn primary wide" disabled={pending} onClick={() => {
+      <button className="btn primary big wide" disabled={pending} onClick={() => {
         if (!(Number(amount) > 0)) return toast("Enter an amount greater than zero.", "error");
         run(() => savePayment(view.rev, { memberId: member.id, week, amount: Number(amount), method, reference, date }));
       }}>{pending ? "Saving…" : "Save payment"}</button>
@@ -159,16 +175,24 @@ function PayoutForm({ view }: { view: View }) {
   const r = view.turns[turn - 1];
   return (
     <div className="stack">
-      <label className="f">Turn
-        <select value={turn} onChange={(e) => setTurn(Number(e.target.value))}>
+      <label className="field"><span>Turn</span><select className="input" value={turn} onChange={(e) => setTurn(Number(e.target.value))}>
           {view.turns.map((t) => <option key={t.turn} value={t.turn}>{t.label} · {t.recipient}{t.done ? " · paid" : ""}</option>)}
         </select>
       </label>
-      <p className="caption">
-        Pool GHS {fmtNum(r.net)} · collected GHS {fmtNum(r.collected)} · contributed for this turn GHS {fmtNum(r.funded)} · group holds GHS {fmtNum(view.cashHeld)}
-      </p>
+      <div className="rounded-2xl bg-subtle p-3.5">
+        <div className="flex items-baseline justify-between gap-2 text-sm">
+          <span className="font-semibold">{r.recipient} · {r.label}</span>
+          <span className="num text-muted">GHS {fmtNum(r.collected)} of {fmtNum(r.net)}</span>
+        </div>
+        <div className="mt-2"><Bar pct={r.net ? (r.collected / r.net) * 100 : 0} tone={r.done ? "in" : undefined} label="Collected" /></div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-muted">
+          <div>Pool<div className="num text-sm font-bold text-ink">GHS {fmtNum(r.net)}</div></div>
+          <div>Contributed<div className="num text-sm font-bold text-ink">GHS {fmtNum(r.funded)}</div></div>
+          <div>Group holds<div className="num text-sm font-bold text-ink">GHS {fmtNum(view.cashHeld)}</div></div>
+        </div>
+      </div>
       {r.done
-        ? <div className="note ok">{r.recipient} has collected the full pool for {r.label}. To undo a payout, use Correction.</div>
+        ? <div className="note ok"><Icon name="check" />{r.recipient} has collected the full pool for {r.label}. To undo a payout, use Correction.</div>
         : <PayoutFields key={`${turn}-${view.rev}`} view={view} turn={r} />}
     </div>
   );
@@ -196,20 +220,23 @@ function PayoutFields({ view, turn: r }: { view: View; turn: View["turns"][numbe
 
   return (
     <>
-      <div className="grid2">
-        <label className="f">Paid out to {r.recipient} now (GHS)
-          <input type="number" min={0} max={r.remaining} step={50} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <div className="form-grid">
+        <label className="field sm:col-span-2"><span>Paid out to {r.recipient} now (GHS)</span>
+          <input className="input big" type="number" min={0} max={r.remaining} step={50} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </label>
-        <label className="f">Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label className="field"><span>Date</span><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <MethodSelect value={method} onChange={setMethod} />
-        <label className="f">Reference<input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" maxLength={120} /></label>
+        <label className="field"><span>Reference</span><input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" maxLength={120} /></label>
       </div>
       <p className="caption">GHS {fmtNum(r.remaining)} still owed to {r.recipient}. Enter just what is handed over today; part payments add up.</p>
-      <button className="btn primary wide" disabled={pending} onClick={check}>Save payout</button>
+      <button className="btn primary big wide" disabled={pending} onClick={check}>Save payout</button>
       <Dialog open={confirm} onClose={() => setConfirm(false)} title="Confirm payout">
-        <p className="caption">
-          <b>{r.recipient}</b> receives <b>GHS {fmtNum(amt)}</b> on {dateLabel}, bringing {r.label} to GHS {fmtNum(total)} of GHS {fmtNum(r.net)}.
-        </p>
+        <div className="rounded-2xl bg-subtle p-4 text-center">
+          <div className="text-xs text-muted">{r.recipient} receives</div>
+          <div className="num mt-1 text-3xl font-bold tracking-tight">GHS {fmtNum(amt)}</div>
+          <div className="mt-1 text-xs text-muted">on {dateLabel}</div>
+        </div>
+        <p className="caption">This brings {r.label} to GHS {fmtNum(total)} of GHS {fmtNum(r.net)}.</p>
         <DialogButtons confirm="Save payout" pending={pending} onCancel={() => setConfirm(false)}
           onConfirm={() => run(() => savePayout(view.rev, { turn: r.turn, memberId: r.memberId, amount: amt, date, method, reference }), () => setConfirm(false))} />
       </Dialog>
@@ -233,30 +260,27 @@ function CorrectionForm({ view, payments, payouts }: { view: View; payments: Pay
 
   return (
     <div className="stack">
-      <p className="caption">The original stays in the record, marked as corrected or reversed. A reason is required.</p>
+      <div className="note info"><Icon name="history" />The original stays in the record, marked as corrected or reversed. A reason is required.</div>
       <div className="seg" role="group" aria-label="Correction type">
         {(["Payment", "Payout"] as const).map((k) => <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>{k}</button>)}
       </div>
       {kind === "Payment" ? (
         !pay ? <p className="caption">No payments to correct.</p> : (
           <>
-            <label className="f">Payment
-              <select value={pay.id} onChange={(e) => setPayId(e.target.value)}>
+            <label className="field"><span>Payment</span><select className="input" value={pay.id} onChange={(e) => setPayId(e.target.value)}>
                 {payments.map((p) => <option key={p.id} value={p.id}>{p.member} · Wk {pad(p.week)} · GHS {fmtNum(p.amount)} · {p.paidOn}</option>)}
               </select>
             </label>
-            <div className="grid2">
-              <label className="f">Action
-                <select value={action} onChange={(e) => setAction(e.target.value as "reverse" | "change")}>
+            <div className="form-grid">
+              <label className="field"><span>Action</span><select className="input" value={action} onChange={(e) => setAction(e.target.value as "reverse" | "change")}>
                   <option value="reverse">Reverse</option><option value="change">Change amount</option>
                 </select>
               </label>
-              <label className="f">New amount (GHS)
-                <input type="number" min={0} step={10} value={newAmount} disabled={action !== "change"} onChange={(e) => setNewAmount(e.target.value)} />
+              <label className="field"><span>New amount (GHS)</span><input className="input" type="number" min={0} step={10} value={newAmount} disabled={action !== "change"} onChange={(e) => setNewAmount(e.target.value)} />
               </label>
             </div>
-            <label className="f">Reason<input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} /></label>
-            <button className="btn primary wide" disabled={pending} onClick={() => {
+            <label className="field"><span>Reason</span><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} /></label>
+            <button className="btn primary big wide" disabled={pending} onClick={() => {
               if (!reason.trim()) return toast("Enter a reason.", "error");
               run(() => correctPayment(view.rev, { id: pay.id, action, newAmount: Number(newAmount || 0), reason }), done);
             }}>{pending ? "Saving…" : "Save correction"}</button>
@@ -264,13 +288,12 @@ function CorrectionForm({ view, payments, payouts }: { view: View; payments: Pay
         )
       ) : !po ? <p className="caption">No payouts to reverse.</p> : (
         <>
-          <label className="f">Payout
-            <select value={po.id} onChange={(e) => setPoId(e.target.value)}>
+          <label className="field"><span>Payout</span><select className="input" value={po.id} onChange={(e) => setPoId(e.target.value)}>
               {payouts.map((p) => <option key={p.id} value={p.id}>{p.recipient} · Turn {p.turn} · GHS {fmtNum(p.amount)} · {p.paidOn}</option>)}
             </select>
           </label>
-          <label className="f">Reason<input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} /></label>
-          <button className="btn primary wide" disabled={pending} onClick={() => {
+          <label className="field"><span>Reason</span><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} /></label>
+          <button className="btn primary big wide" disabled={pending} onClick={() => {
             if (!reason.trim()) return toast("Enter a reason.", "error");
             run(() => reversePayout(view.rev, { id: po.id, reason }), done);
           }}>{pending ? "Saving…" : "Reverse payout"}</button>

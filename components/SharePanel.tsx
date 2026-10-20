@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Icon } from "./icons";
 import { useToast } from "./Toaster";
 
 export type Message = { group: string; label: string; text: string; file: string };
@@ -29,29 +30,46 @@ export function SharePanel({ messages }: { messages: Message[] }) {
   };
 
   return (
-    <section className="card stack">
-      <div className="grid2">
-        <label className="f">Message
-          <select value={group} onChange={(e) => { setGroup(e.target.value); setIdx(0); }}>
-            {groups.map((g) => <option key={g}>{g}</option>)}
-          </select>
-        </label>
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <section className="card stack">
+        <div>
+          <div className="mb-2 text-[13px] font-semibold">Message</div>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Message">
+            {groups.map((g) => (
+              <button key={g} type="button" aria-pressed={group === g} onClick={() => { setGroup(g); setIdx(0); }}
+                className="min-h-9 cursor-pointer rounded-full border border-line bg-surface px-3 py-1 text-[13px] font-medium transition-colors hover:bg-subtle aria-pressed:border-brand aria-pressed:bg-brand-soft aria-pressed:text-brand-ink">
+                {g}
+              </button>
+            ))}
+          </div>
+        </div>
         {items.length > 1 && (
-          <label className="f">Receipt
-            <select value={idx} onChange={(e) => setIdx(Number(e.target.value))}>
+          <label className="field"><span>Receipt</span>
+            <select className="input" value={idx} onChange={(e) => setIdx(Number(e.target.value))}>
               {items.map((m, i) => <option key={m.file} value={i}>{m.label}</option>)}
             </select>
           </label>
         )}
-      </div>
-      <pre className="msg">{msg.text}</pre>
-      <div className="grid3">
-        <button className="btn primary" onClick={copy}>Copy</button>
-        {wa.length <= 1900
-          ? <a className="btn" href={wa} target="_blank" rel="noopener noreferrer">Open in WhatsApp</a>
-          : <span className="caption" style={{ alignSelf: "center" }}>Too long for a direct link. Use Copy.</span>}
-        <button className="btn" onClick={download}>Download .txt</button>
-      </div>
-    </section>
+        <div className="grid gap-2">
+          <button className="btn primary big" onClick={copy}><Icon name="copy" />Copy message</button>
+          <div className="grid grid-cols-2 gap-2">
+            {wa.length <= 1900
+              ? <a className="btn" href={wa} target="_blank" rel="noopener noreferrer"><Icon name="chat" />WhatsApp</a>
+              : <span className="caption self-center">Too long for a direct link. Use Copy.</span>}
+            <button className="btn" onClick={download}><Icon name="download" />.txt</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="section">
+          <h2 className="section-title">Preview</h2>
+          <span className="section-aside">{msg.text.length.toLocaleString("en-US")} characters</span>
+        </div>
+        <div className="rounded-2xl bg-subtle p-3 md:p-4">
+          <pre className="bubble">{msg.text}</pre>
+        </div>
+      </section>
+    </div>
   );
 }

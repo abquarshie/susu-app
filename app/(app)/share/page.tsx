@@ -3,6 +3,7 @@ import { exportHistory, exportOnboarding, exportReminder, exportWeekly, payoutRe
 import { fmtNum } from "@/lib/format";
 import { namedPayments, namedPayouts } from "@/lib/view";
 import { SharePanel, type Message } from "@/components/SharePanel";
+import { PageHead } from "@/components/ui";
 
 export default async function SharePage() {
   const { g } = await loadGroup();
@@ -23,5 +24,10 @@ export default async function SharePage() {
       text: payoutReceiptText(p, p.recipient), file: `Payout_${p.id}.txt`,
     })),
   ];
-  return <SharePanel messages={messages} />;
+  return (
+    <div className="stack">
+      <PageHead title="Share" sub="Ready-made WhatsApp messages and receipts for the group." />
+      <SharePanel messages={messages} />
+    </div>
+  );
 }
