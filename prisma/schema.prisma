@@ -1,0 +1,129 @@
+// Susu Savings — relational schema for Neon Postgres.
+// The Streamlit app kept one JSON blob; here each kind of record has its own table,
+// and every money-moving change still goes through a rev-guarded transaction (see lib/commit.ts).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// One row (id = 1): the group's settings plus the optimistic-concurrency counter.
+model Group {
+  id             Int       @id @default(1)
+  rev            Int       @default(0)
+  startDate      DateTime  @db.Date
+  baseMonthly    Decimal   @db.Decimal(12, 2)
+  adminFeePct    Decimal   @default(0) @db.Decimal(5, 2)
+  passcodeHash   String    @default("")
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  updatedAt      DateTime  @updatedAt
+}
+
+/// position is the 0-based turn slot: Turn 1 = position 0.
+model Member {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  position    Int       @unique
+  monthlyTier Decimal?  @db.Decimal(12, 2) // null means the group's base amount
+  exitWeek    Int? // set when the member has left; they stop owing after this week
+  payments    Payment[]
+  payouts     Payout[]
+  turnLocks   TurnLock[]
+}
+
+enum PaymentStatus {
+  COMPLETED
+  REVERSED
+}
+
+/// Every contribution received. Corrections edit the amount in place; reversals keep the row.
+model Payment {
+  id               String        @id // PAY-YYYYMMDDHHMMSS-XXXXXX, printed on receipts
+  memberId         String
+  member           Member        @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  week             Int
+  amount           Decimal       @db.Decimal(12, 2)
+  paidOn           String        @default("") // as entered, e.g. "17 Aug 2026"
+  method           String
+  reference        String        @default("")
+  status           PaymentStatus @default(COMPLETED)
+  recordedBy       String
+  recordedAt       DateTime      @default(now())
+  reversedAt       DateTime?
+  reversedBy       String?
+  reversalReason   String?
+  correctedAt      DateTime?
+  correctedBy      String?
+  correctionReason String?
+
+  @@index([memberId, week])
+  @@index([recordedAt])
+}
+
+/// Freezes a turn's pool at its first payout, so later tier, fee or member changes
+/// can't reopen a paid turn. Deleted again if every payout for the turn is reversed.
+model TurnLock {
+  turn          Int    @id // 1-based
+  memberId      String
+  member        Member @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  net           Decimal @db.Decimal(12, 2)
+  fee           Decimal @db.Decimal(12, 2)
+  disbursedDate String  @default("")
+}
+
+enum PayoutStatus {
+  ACTIVE
+  REVERSED
+}
+
+/// Each amount handed to a turn's recipient. A turn's collected total is the sum of its ACTIVE rows.
+model Payout {
+  id             String       @id // PAYOUT-...
+  turn           Int
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  amount         Decimal      @db.Decimal(12, 2)
+  paidOn         String       @default("")
+  method         String
+  reference      String       @default("")
+  status         PayoutStatus @default(ACTIVE)
+  recordedBy     String
+  recordedAt     DateTime     @default(now())
+  reversedAt     DateTime?
+  reversedBy     String?
+  reversalReason String?
+
+  @@index([turn])
+}
+
+/// Cash held at the start of each week, for the "+GHS x this week" figure.
+model Snapshot {
+  week     Int     @id
+  cashHeld Decimal @db.Decimal(12, 2)
+}
+
+model Reconciliation {
+  id         String   @id @default(cuid())
+  countedAt  DateTime @default(now())
+  actual     Decimal  @db.Decimal(12, 2)
+  system     Decimal  @db.Decimal(12, 2)
+  difference Decimal  @db.Decimal(12, 2)
+  note       String   @default("")
+  who        String
+}
+
+model Activity {
+  id     String   @id @default(cuid())
+  type   String // payment | payout | setting
+  text   String
+  detail String[]
+  who    String
+  at     DateTime @default(now())
+
+  @@index([at])
+}
