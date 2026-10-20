@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useTransition } from "react";
+import { Icon } from "./icons";
 
 type Kind = "success" | "warning" | "error";
 type Toast = { id: number; message: string; kind: Kind };
@@ -20,7 +21,9 @@ export function Toaster({ children }: { children: React.ReactNode }) {
     <Ctx.Provider value={push}>
       {children}
       <div className="toasts" role="status" aria-live="polite">
-        {toasts.map((t) => <div key={t.id} className={`toast ${t.kind}`}>{t.message}</div>)}
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.kind}`}><Icon name={t.kind === "success" ? "check" : "warning"} />{t.message}</div>
+        ))}
       </div>
     </Ctx.Provider>
   );
