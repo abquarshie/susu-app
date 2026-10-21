@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { configProblems } from "@/lib/env";
 import { FlashOnMount } from "@/components/Toaster";
 import { Icon } from "@/components/icons";
 import { LoginForm } from "./LoginForm";
@@ -8,8 +10,11 @@ const POINTS = [
   ["share", "Send updates and receipts to WhatsApp"],
 ] as const;
 
+export const metadata: Metadata = { title: "Sign in" };
+
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ timeout?: string }> }) {
   const { timeout } = await searchParams;
+  const problems = configProblems();
   return (
     <main className="grid min-h-dvh md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       {timeout && <FlashOnMount message="Session timed out. Please sign in again." />}
@@ -36,7 +41,15 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <h2 className="m-0 text-2xl font-bold tracking-tight">Welcome back</h2>
             <p className="mt-1.5 text-sm text-muted">Sign in to manage the group.</p>
           </div>
-          <LoginForm />
+          {problems.length ? (
+            <div className="note warn" role="alert">
+              <Icon name="warning" />
+              <div>
+                <b>The app isn&apos;t fully set up yet.</b> Add these in Vercel → Settings → Environment Variables, then redeploy:
+                <ul className="mt-1.5 mb-0 pl-4">{problems.map((p) => <li key={p}>{p}</li>)}</ul>
+              </div>
+            </div>
+          ) : <LoginForm />}
           <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-muted md:justify-start">
             <Icon name="lock" className="size-3.5" />Sessions end after 30 minutes idle.
           </p>

@@ -8,10 +8,10 @@ export function LoginForm() {
   return (
     <form action={action} className="stack">
       <label className="field"><span>Your name</span>
-        <input className="input" name="name" maxLength={40} placeholder="Recorded on every change you make" autoComplete="name" required />
+        <input className="input" name="name" maxLength={40} defaultValue={state?.name} placeholder="Recorded on every change you make" autoComplete="name" required />
       </label>
       <label className="field"><span>Passcode</span>
-        <input className="input" name="passcode" type="password" autoComplete="current-password" required />
+        <input className="input" name="passcode" type="password" autoComplete="current-password" required autoFocus={!!state?.name} />
       </label>
       {state?.error && <p className="note warn" role="alert"><Icon name="warning" />{state.error}</p>}
       <button className="btn primary big wide mt-1" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>

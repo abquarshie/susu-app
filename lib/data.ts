@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { after } from "next/server";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma, type Tx } from "./db";
@@ -37,14 +38,22 @@ export async function ensureGroup(db: Db = prisma) {
   });
 }
 
-export async function loadRecords(db: Db = prisma): Promise<Records> {
+// Only the columns the model uses: the audit fields (reversedBy, correctionReason…) stay in the database.
+const LEDGER = {
+  id: true, memberId: true, amount: true, paidOn: true, method: true, reference: true,
+  status: true, recordedBy: true, recordedAt: true,
+} as const;
+
+/** All records in one parallel round trip, or null when the group row doesn't exist yet. */
+async function readRecords(db: Db): Promise<Records | null> {
   const [group, members, payments, payouts, locks] = await Promise.all([
-    db.group.findUniqueOrThrow({ where: { id: 1 } }),
+    db.group.findUnique({ where: { id: 1 }, select: { rev: true, startDate: true, baseMonthly: true, adminFeePct: true } }),
     db.member.findMany({ orderBy: { position: "asc" } }),
-    db.payment.findMany({ orderBy: { recordedAt: "desc" } }),
-    db.payout.findMany({ orderBy: { recordedAt: "desc" } }),
+    db.payment.findMany({ orderBy: { recordedAt: "desc" }, select: { ...LEDGER, week: true } }),
+    db.payout.findMany({ orderBy: { recordedAt: "desc" }, select: { ...LEDGER, turn: true } }),
     db.turnLock.findMany(),
   ]);
+  if (!group) return null;
   return {
     settings: {
       rev: group.rev, startDate: group.startDate.toISOString().slice(0, 10),
@@ -66,13 +75,24 @@ export async function loadRecords(db: Db = prisma): Promise<Records> {
   };
 }
 
+export async function loadRecords(db: Db = prisma): Promise<Records> {
+  const rec = await readRecords(db);
+  if (!rec) throw new Error("The group has not been set up yet.");
+  return rec;
+}
+
 /** Everything a page needs. Also records this week's opening cash the first time the week is seen. */
 export const loadGroup = cache(async () => {
-  await ensureGroup();
-  const rec = await loadRecords();
+  let rec = await readRecords(prisma);
+  if (!rec) {
+    await ensureGroup(); // first run only; normally the group row is already there
+    rec = await loadRecords();
+  }
   const g = new Group(rec, new Date());
   if (g.week > 0) {
-    await prisma.snapshot.upsert({ where: { week: g.week }, create: { week: g.week, cashHeld: g.cashHeld }, update: {} });
+    // After the response is sent, so it never slows or breaks a page. ON CONFLICT DO NOTHING keeps the first figure.
+    const snap = { week: g.week, cashHeld: g.cashHeld };
+    after(() => prisma.snapshot.createMany({ data: [snap], skipDuplicates: true }).catch((e) => console.error("snapshot", e)));
   }
   return { g, rec };
 });

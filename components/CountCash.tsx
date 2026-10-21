@@ -4,13 +4,14 @@ import { countCash } from "@/app/actions";
 import { EPS, fmtNum, money } from "@/lib/format";
 import { Dialog, DialogButtons } from "./Dialog";
 import { Icon } from "./icons";
-import { useAction } from "./Toaster";
+import { useAction, useToast } from "./Toaster";
 
 export function CountCashButton({ rev, cashHeld, className = "btn" }: { rev: number; cashHeld: number; className?: string }) {
   const [open, setOpen] = useState(false);
   const [actual, setActual] = useState(String(cashHeld));
   const [note, setNote] = useState("");
   const { run, pending } = useAction();
+  const toast = useToast();
   const diff = money(Number(actual || 0) - cashHeld);
 
   return (
@@ -33,7 +34,10 @@ export function CountCashButton({ rev, cashHeld, className = "btn" }: { rev: num
           <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" maxLength={200} />
         </label>
         <DialogButtons confirm="Save count" pending={pending} onCancel={() => setOpen(false)}
-          onConfirm={() => run(() => countCash(rev, { actual: Number(actual || 0), note }), () => setOpen(false))} />
+          onConfirm={() => {
+            if (actual.trim() === "" || !(Number(actual) >= 0)) return toast("Enter the amount you counted.", "error");
+            run(() => countCash(rev, { actual: Number(actual), note }), () => setOpen(false));
+          }} />
       </Dialog>
     </>
   );
