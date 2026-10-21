@@ -4,16 +4,17 @@
 // the change against them, and logs it to Activity.
 
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { commit, Refused, type ActionResult } from "@/lib/commit";
 import { prisma } from "@/lib/db";
 import { currentAdmin, ensureGroup, loadRecords } from "@/lib/data";
-import { EPS, fmtNum, formatDate, formatPlain, METHODS, money, newId, parseIsoDay, parseNames, plural } from "@/lib/format";
+import { EPS, fmtNum, formatDate, formatPlain, isoDay, METHODS, money, newId, parseIsoDay, parseNames, plural } from "@/lib/format";
 import { memberListProblems, orderChanges, type Group } from "@/lib/model";
 import { checkPw, hashPw, isScryptHash } from "@/lib/password";
 import { COOKIE, cookieOptions, signSession } from "@/lib/session";
 
 const MAX_FAILS = 5;
+const MAX_MEMBERS = 100;
 const LOCK_MS = 60_000;
 const pad = (w: number) => String(w).padStart(2, "0");
 
@@ -31,6 +32,14 @@ function int(v: unknown, name: string, min: number, max: number): number {
 function text(v: unknown, max = 200): string {
   return String(v ?? "").trim().slice(0, max);
 }
+function str(v: unknown, max = 200): string {
+  return typeof v === "string" ? v.slice(0, max) : "";
+}
+/** A list of ids from the browser, de-duplicated so a repeated id can't record a payment twice. */
+function ids(v: unknown): string[] {
+  if (!Array.isArray(v)) throw new Refused("The request was not valid. Reload the page and try again.");
+  return [...new Set(v.filter((x): x is string => typeof x === "string"))];
+}
 function method(v: unknown): string {
   const m = String(v);
   return (METHODS as readonly string[]).includes(m) ? m : "Other";
@@ -46,36 +55,52 @@ function memberOf(g: Group, id: string) {
   return m;
 }
 
-// Refused thrown before commit() starts (bad input) still needs to reach the user as a message.
+// Every action checks the sign-in itself (not just proxy.ts), and always answers with a message:
+// Refused thrown before commit() starts (bad input) reaches the user as-is, anything unexpected
+// becomes a plain "nothing was changed" instead of a crashed request.
 async function guard(fn: () => Promise<ActionResult>): Promise<ActionResult> {
   try {
+    await currentAdmin();
     return await fn();
   } catch (e) {
+    unstable_rethrow(e); // let redirect() (e.g. session timed out) through
     if (e instanceof Refused) return { ok: false, kind: "error", message: e.message };
-    throw e;
+    console.error(e);
+    return { ok: false, kind: "error", message: "Something went wrong. Nothing was changed. Please try again." };
   }
 }
 
 // ══ Sign-in ═══════════════════════════════════════════════════════════════════
-export async function signIn(_prev: { error: string } | null, form: FormData): Promise<{ error: string }> {
+export type SignInState = { error: string; name: string } | null;
+export async function signIn(prev: SignInState, form: FormData): Promise<SignInState> {
+  try {
+    return await trySignIn(form);
+  } catch (e) {
+    unstable_rethrow(e); // the redirect to Overview on success
+    console.error(e);
+    return { error: "Sign-in is unavailable right now. Please try again in a moment.", name: text(form.get("name"), 40) };
+  }
+}
+
+async function trySignIn(form: FormData): Promise<SignInState> {
   const name = text(form.get("name"), 40);
-  const pw = String(form.get("passcode") ?? "");
+  const pw = str(form.get("passcode"), 200);
+  const fail = (error: string) => ({ error, name });
   const group = await ensureGroup();
   const stored = group.passcodeHash || process.env.ADMIN_PASSCODE || "";
 
   if (group.lockedUntil && group.lockedUntil > new Date()) {
     const secs = Math.ceil((group.lockedUntil.getTime() - Date.now()) / 1000);
-    return { error: `Too many attempts. Try again in ${secs} seconds.` };
+    return fail(`Too many attempts. Try again in ${secs} seconds.`);
   }
-  if (!stored) return { error: "No admin passcode is configured. Set ADMIN_PASSCODE in the environment first." };
-  if (!name) return { error: "Enter your name." };
+  if (!stored) return fail("No admin passcode is configured. Set ADMIN_PASSCODE in the environment first.");
+  if (!name) return fail("Enter your name.");
   if (!checkPw(pw, stored)) {
-    const fails = group.failedAttempts + 1;
-    await prisma.group.update({
-      where: { id: 1 },
-      data: fails >= MAX_FAILS ? { failedAttempts: 0, lockedUntil: new Date(Date.now() + LOCK_MS) } : { failedAttempts: fails },
-    });
-    return { error: "That passcode is not correct." };
+    // atomic increment, so parallel wrong guesses can't slip past the lockout
+    const { failedAttempts } = await prisma.group.update({ where: { id: 1 }, data: { failedAttempts: { increment: 1 } } });
+    if (failedAttempts >= MAX_FAILS)
+      await prisma.group.update({ where: { id: 1 }, data: { failedAttempts: 0, lockedUntil: new Date(Date.now() + LOCK_MS) } });
+    return fail("That passcode is not correct.");
   }
   await prisma.group.update({
     where: { id: 1 },
@@ -95,11 +120,12 @@ export async function saveWeek(rev: number, input: { week: number; method: strin
   return guard(async () => {
     const d = formatPlain(day(input.date));
     const meth = method(input.method);
+    const paid = ids(input.paid), unpaid = ids(input.unpaid).filter((id) => !paid.includes(id));
     return commit(rev, `Week ${pad(input.week)} saved`, async ({ tx, g, who }) => {
       const wk = int(input.week, "Week", 1, g.weeks);
       const detail: string[] = [];
       let added = 0, reversed = 0;
-      for (const id of input.paid) {
+      for (const id of paid) {
         const m = memberOf(g, id);
         const due = money(g.weekly(m) - g.paidAmount(m, wk));
         if (due <= EPS) continue;
@@ -109,7 +135,7 @@ export async function saveWeek(rev: number, input: { week: number; method: strin
         added++;
         detail.push(`${m.name} Wk ${pad(wk)}: recorded GHS ${fmtNum(due)}`);
       }
-      for (const id of input.unpaid) {
+      for (const id of unpaid) {
         const m = memberOf(g, id);
         if (!g.paid(m, wk)) continue;
         const res = await tx.payment.updateMany({
@@ -192,9 +218,11 @@ export async function correctPayment(rev: number, input: { id: string; action: "
   return guard(async () => {
     const reason = text(input.reason, 200);
     if (!reason) throw new Refused("Enter a reason.");
-    const newAmt = money(num(input.newAmount, "New amount"));
+    if (input.action !== "reverse" && input.action !== "change") throw new Refused("Choose Reverse or Change amount.");
+    const newAmt = input.action === "change" ? money(num(input.newAmount, "New amount")) : 0;
+    const id = str(input.id, 64);
     return commit(rev, "Correction saved", async ({ tx, g, who }) => {
-      const row = await tx.payment.findUnique({ where: { id: input.id } });
+      const row = await tx.payment.findUnique({ where: { id } });
       if (!row || row.status !== "COMPLETED") throw new Refused("That payment has already been reversed or no longer exists.");
       const m = memberOf(g, row.memberId);
       const old = money(row.amount);
@@ -217,8 +245,9 @@ export async function reversePayout(rev: number, input: { id: string; reason: st
   return guard(async () => {
     const reason = text(input.reason, 200);
     if (!reason) throw new Refused("Enter a reason.");
+    const id = str(input.id, 64);
     return commit(rev, "Payout reversed", async ({ tx, g, who }) => {
-      const p = await tx.payout.findUnique({ where: { id: input.id } });
+      const p = await tx.payout.findUnique({ where: { id } });
       if (!p || p.status !== "ACTIVE") throw new Refused("That payout has already been reversed or no longer exists.");
       await tx.payout.update({ where: { id: p.id }, data: { status: "REVERSED", reversedAt: new Date(), reversedBy: who, reversalReason: reason } });
       const cur = g.turnCollected(p.turn);
@@ -254,13 +283,15 @@ export async function saveSettings(rev: number, input: { startDate: string; base
   return guard(async () => {
     const start = day(input.startDate);
     const base = money(num(input.baseMonthly, "Monthly contribution"));
-    const fee = num(input.adminFeePct, "Admin fee");
+    if (base <= 0) throw new Refused("The monthly contribution must be more than zero.");
+    const fee = money(num(input.adminFeePct, "Admin fee"));
     if (fee > 100) throw new Refused("The admin fee can't be more than 100%.");
-    const names = parseNames(String(input.names).slice(0, 4000)).map((n) => n.slice(0, 40));
+    const names = parseNames(str(input.names, 6000)).map((n) => n.slice(0, 40).trim()).filter(Boolean);
+    if (names.length > MAX_MEMBERS) throw new Refused(`A group can have at most ${MAX_MEMBERS} members.`);
     return commit(rev, "Settings saved", async ({ tx, g }) => {
       const s = g.rec.settings;
       const oldNames = g.members.map((m) => m.name);
-      const startChanged = input.startDate !== s.startDate;
+      const startChanged = isoDay(start) !== s.startDate;
       const withRecords = new Set(g.rec.payments.map((p) => p.memberId).concat(g.rec.payouts.map((p) => p.memberId)));
       const hasRecords = (name: string) => {
         const m = g.members.find((x) => x.name === name);
@@ -270,7 +301,7 @@ export async function saveSettings(rev: number, input: { startDate: string; base
       if (errs.length) throw new Refused("Settings not saved. " + errs.join(" "));
 
       const changes: string[] = [];
-      if (startChanged) changes.push(`start date ${s.startDate} → ${input.startDate}`);
+      if (startChanged) changes.push(`start date ${s.startDate} → ${isoDay(start)}`);
       if (base !== s.baseMonthly) changes.push(`monthly contribution ${fmtNum(s.baseMonthly)} → ${fmtNum(base)}`);
       if (fee !== s.adminFeePct) changes.push(`admin fee ${s.adminFeePct}% → ${fee}%`);
       const listChanged = names.join("\u0000") !== oldNames.join("\u0000");
@@ -294,10 +325,12 @@ export async function saveSettings(rev: number, input: { startDate: string; base
 // ══ Settings: members (tiers, exits, rename, swap) ════════════════════════════
 export async function saveMembers(rev: number, rows: { memberId: string; tier: number; exitWeek: number | null }[]) {
   return guard(async () => commit(rev, "Member details saved", async ({ tx, g }) => {
+    if (!Array.isArray(rows)) throw new Refused("The request was not valid. Reload the page and try again.");
     const detail: string[] = [];
     for (const row of rows) {
-      const m = memberOf(g, row.memberId);
+      const m = memberOf(g, row?.memberId);
       const tier = money(num(row.tier, `${m.name}'s monthly amount`));
+      if (tier <= 0) throw new Refused(`${m.name}'s monthly amount must be more than zero.`);
       const exit = row.exitWeek == null ? null : int(row.exitWeek, `${m.name}'s leaving week`, 1, g.weeks);
       const data: { monthlyTier?: number | null; exitWeek?: number | null } = {};
       if (Math.abs(tier - g.tier(m)) > EPS) {
@@ -317,7 +350,7 @@ export async function saveMembers(rev: number, rows: { memberId: string; tier: n
 
 export async function renameMember(rev: number, memberId: string, newName: string) {
   return guard(async () => {
-    const clean = text(newName.replace(/,/g, " ").replace(/\s+/g, " "), 40);
+    const clean = text(str(newName, 200).replace(/,/g, " ").replace(/\s+/g, " "), 40);
     if (!clean) throw new Refused("Enter the new name.");
     let old = "";
     const res = await commit(rev, "", async ({ tx, g }) => {
@@ -358,11 +391,12 @@ export async function swapTurns(rev: number, a: string, b: string) {
 // ══ Settings: account and data ════════════════════════════════════════════════
 export async function changePasscode(rev: number, input: { current: string; next: string; repeat: string }) {
   return guard(async () => {
+    const current = str(input.current), next = str(input.next), repeat = str(input.repeat);
     const group = await prisma.group.findUniqueOrThrow({ where: { id: 1 } });
-    if (!checkPw(input.current, group.passcodeHash || process.env.ADMIN_PASSCODE)) throw new Refused("The current passcode is not correct.");
-    if (input.next.length < 8) throw new Refused("The new passcode must be at least 8 characters.");
-    if (input.next !== input.repeat) throw new Refused("The two new passcodes do not match.");
-    const hash = hashPw(input.next);
+    if (!checkPw(current, group.passcodeHash || process.env.ADMIN_PASSCODE)) throw new Refused("The current passcode is not correct.");
+    if (next.length < 8) throw new Refused("The new passcode must be at least 8 characters.");
+    if (next !== repeat) throw new Refused("The two new passcodes do not match.");
+    const hash = hashPw(next);
     return commit(rev, "Passcode changed", async ({ tx }) => {
       await tx.group.update({ where: { id: 1 }, data: { passcodeHash: hash } });
       return { type: "setting", text: "Passcode changed" };

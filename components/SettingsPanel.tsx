@@ -47,6 +47,8 @@ function GroupSettings({ view, s }: { view: View; s: Settings }) {
 
   const onSave = () => {
     if (!parseIsoDay(start)) return toast("Enter a valid start date.", "error");
+    if (!(Number(base) > 0)) return toast("Enter a monthly contribution above zero.", "error");
+    if (!(Number(fee) >= 0 && Number(fee) <= 100)) return toast("The admin fee must be between 0 and 100%.", "error");
     const oldList = parseNames(s.names), newList = parseNames(names);
     const changes: string[] = [];
     let structural = false;
@@ -85,6 +87,7 @@ function MemberSettings({ view }: { view: View }) {
   const [rows, setRows] = useState(() => view.members.map((m) => ({ id: m.id, tier: String(m.tier), left: m.exitWeek ? String(m.exitWeek) : "" })));
   const [dlg, setDlg] = useState<"swap" | "rename" | null>(null);
   const { run, pending } = useAction();
+  const toast = useToast();
   const set = (id: string, k: "tier" | "left", v: string) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [k]: v } : r)));
 
   return (
@@ -112,8 +115,11 @@ function MemberSettings({ view }: { view: View }) {
       <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
         <button className="btn" onClick={() => setDlg("swap")}><Icon name="swap" />Swap turns</button>
         <button className="btn" onClick={() => setDlg("rename")}><Icon name="edit" />Rename</button>
-        <button className="btn primary col-span-2 sm:px-6" disabled={pending} onClick={() => run(() => saveMembers(view.rev,
-          rows.map((r) => ({ memberId: r.id, tier: Number(r.tier || 0), exitWeek: r.left.trim() ? Number(r.left) : null }))))}>
+        <button className="btn primary col-span-2 sm:px-6" disabled={pending} onClick={() => {
+          const bad = rows.find((r) => !(Number(r.tier) > 0));
+          if (bad) return toast(`Enter a monthly amount above zero for ${view.members.find((m) => m.id === bad.id)?.name ?? "every member"}.`, "error");
+          run(() => saveMembers(view.rev, rows.map((r) => ({ memberId: r.id, tier: Number(r.tier), exitWeek: r.left.trim() ? Number(r.left) : null }))));
+        }}>
           {pending ? "Saving…" : "Save changes"}
         </button>
       </div>

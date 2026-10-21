@@ -37,7 +37,7 @@
   --color-out-soft: var(--out-soft);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --shadow-soft: 0 1px 2px rgb(15 23 42 / .04), 0 4px 16px -4px rgb(15 23 42 / .08);
   --shadow-lift: 0 16px 40px -12px rgb(15 23 42 / .28);
@@ -180,6 +180,9 @@
   .scale span.on { @apply border-brand font-semibold text-brand-ink; }
   .mstat { @apply text-right text-[13px] font-semibold whitespace-nowrap md:col-start-3 md:row-start-1; font-variant-numeric: tabular-nums; }
 
+  /* loading placeholder */
+  .skeleton { @apply rounded-xl bg-subtle; animation: pulse 1.4s ease-in-out infinite; }
+
   /* message preview on Share */
   .bubble {
     @apply relative m-0 max-h-[460px] overflow-auto rounded-2xl rounded-tl-md bg-in-soft p-4 font-sans text-[13.5px] leading-relaxed
@@ -197,13 +200,14 @@
 
   /* ---- toasts ---- */
   .toasts { @apply pointer-events-none fixed top-4 left-1/2 z-60 grid w-[min(440px,calc(100vw-32px))] -translate-x-1/2 gap-2; }
-  .toast { @apply pointer-events-auto flex items-center gap-2.5 rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-bg shadow-lift; animation: toast-in .18s ease-out; }
+  .toast { @apply pointer-events-auto flex w-full cursor-pointer items-center border-0 gap-2.5 rounded-2xl bg-ink px-4 py-3 text-sm font-semibold text-bg shadow-lift; animation: toast-in .18s ease-out; }
   .toast svg { @apply size-5 flex-none; }
   .toast.success svg { @apply text-in; }
   .toast.warning svg { @apply text-warn; }
   .toast.error svg { @apply text-out; }
 }
 
+@keyframes pulse { 50% { opacity: .55; } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(12px); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

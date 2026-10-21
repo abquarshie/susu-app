@@ -282,6 +282,7 @@ function CorrectionForm({ view, payments, payouts }: { view: View; payments: Pay
             <label className="field"><span>Reason</span><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} /></label>
             <button className="btn primary big wide" disabled={pending} onClick={() => {
               if (!reason.trim()) return toast("Enter a reason.", "error");
+              if (action === "change" && !(Number(newAmount) > 0)) return toast("Enter the new amount, or choose Reverse.", "error");
               run(() => correctPayment(view.rev, { id: pay.id, action, newAmount: Number(newAmount || 0), reason }), done);
             }}>{pending ? "Saving…" : "Save correction"}</button>
           </>

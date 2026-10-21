@@ -7,11 +7,11 @@ import { Icon } from "@/components/icons";
 import { Avatar, Bar, Kpi, PageHead, Pill } from "@/components/ui";
 
 export default async function OverviewPage() {
-  const { g } = await loadGroup();
-  const [prev, lastCount] = await Promise.all([
-    g.week > 1 ? prisma.snapshot.findUnique({ where: { week: g.week - 1 } }) : null,
-    prisma.reconciliation.findFirst({ orderBy: { countedAt: "desc" } }),
+  const [{ g }, lastCount] = await Promise.all([
+    loadGroup(),
+    prisma.reconciliation.findFirst({ orderBy: { countedAt: "desc" }, select: { countedAt: true, difference: true } }),
   ]);
+  const prev = g.week > 1 ? await prisma.snapshot.findUnique({ where: { week: g.week - 1 } }) : null;
 
   const change = prev ? money(g.cashHeld - Number(prev.cashHeld)) : 0;
   let countText = "Cash has not been counted yet";

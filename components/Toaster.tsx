@@ -22,7 +22,10 @@ export function Toaster({ children }: { children: React.ReactNode }) {
       {children}
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.kind}`}><Icon name={t.kind === "success" ? "check" : "warning"} />{t.message}</div>
+          <button key={t.id} type="button" className={`toast ${t.kind}`} title="Dismiss"
+            onClick={() => setToasts((all) => all.filter((x) => x.id !== t.id))}>
+            <Icon name={t.kind === "success" ? "check" : "warning"} /><span className="flex-1 text-left">{t.message}</span>
+          </button>
         ))}
       </div>
     </Ctx.Provider>
