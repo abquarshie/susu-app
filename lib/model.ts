@@ -2,7 +2,7 @@
 // Pure functions only: the same code runs on the server and validates inside transactions.
 import { EPS, addWeeks, dayDiff, fmtNum, formatDate, money } from "./format";
 
-export type MemberRec = { id: string; name: string; position: number; tier: number | null; exitWeek: number | null };
+export type MemberRec = { id: string; name: string; position: number; tier: number | null; exitWeek: number | null; phone: string };
 export type PaymentRec = {
   id: string; memberId: string; week: number; amount: number; paidOn: string; method: string;
   reference: string; status: "COMPLETED" | "REVERSED"; recordedBy: string; recordedAt: string;
@@ -12,7 +12,7 @@ export type PayoutRec = {
   reference: string; status: "ACTIVE" | "REVERSED"; recordedBy: string; recordedAt: string;
 };
 export type TurnLockRec = { turn: number; memberId: string; net: number; fee: number; disbursedDate: string };
-export type SettingsRec = { rev: number; startDate: string; baseMonthly: number; adminFeePct: number };
+export type SettingsRec = { rev: number; startDate: string; baseMonthly: number; adminFeePct: number; cycle: number };
 
 export type Records = {
   settings: SettingsRec;
@@ -92,6 +92,8 @@ export class Group {
   }
 
   member(id: string) { return this.byId.get(id); }
+  /** The end date has come, or every turn is paid out: the cycle can be closed and the next one started. */
+  get ended() { return dayDiff(this.today, this.end) >= 0 || (this.schedule.length > 0 && this.schedule.every((r) => r.done)); }
   tier(m: MemberRec) { return m.tier ?? this.base; }
   weekly(m: MemberRec) { return money(this.tier(m) / 4); }
   paidAmount(m: MemberRec, w: number) { return this.amt.get(k(m.id, w)) ?? 0; }
