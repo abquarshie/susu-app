@@ -1,7 +1,9 @@
 "use client";
 import { useState } from "react";
-import { changePasscode, exportData, renameMember, saveMembers, saveSettings, signOut, swapTurns } from "@/app/actions";
-import { fmtNum, parseIsoDay, parseNames } from "@/lib/format";
+import {
+  changePasscode, cycleArchive, exportData, renameMember, saveMembers, saveSettings, signOut, startNewCycle, swapTurns, type CycleSummary,
+} from "@/app/actions";
+import { fmtNum, formatDate, parseIsoDay, parseNames, waNumber } from "@/lib/format";
 import { orderChanges } from "@/lib/model";
 import type { View } from "@/lib/view";
 import { Dialog, DialogButtons } from "./Dialog";
@@ -11,10 +13,14 @@ import { Avatar, PageHead } from "./ui";
 
 type Settings = { startDate: string; baseMonthly: number; adminFeePct: number; names: string };
 type Act = { id: string; when: string; who: string; text: string; detail: string };
-const SECTIONS = ["Group", "Members", "Activity", "Data", "Account"] as const;
+type PastCycle = CycleSummary & { closed: string; by: string };
+const SECTIONS = ["Group", "Members", "Cycles", "Activity", "Data", "Account"] as const;
+type Sec = (typeof SECTIONS)[number];
 
-export function SettingsPanel({ view, who, settings, activity }: { view: View; who: string; settings: Settings; activity: Act[] }) {
-  const [sec, setSec] = useState<(typeof SECTIONS)[number]>("Group");
+export function SettingsPanel({ view, who, settings, activity, cycles, section }: {
+  view: View; who: string; settings: Settings; activity: Act[]; cycles: PastCycle[]; section?: string;
+}) {
+  const [sec, setSec] = useState<Sec>((SECTIONS as readonly string[]).includes(section ?? "") ? (section as Sec) : "Group");
   return (
     <div className="stack">
       <PageHead title="Settings" sub="Cycle rules, members, the activity log and your account." />
@@ -24,6 +30,7 @@ export function SettingsPanel({ view, who, settings, activity }: { view: View; w
       <section className="card stack">
         {sec === "Group" && <GroupSettings key={view.rev} view={view} s={settings} />}
         {sec === "Members" && <MemberSettings key={view.rev} view={view} />}
+        {sec === "Cycles" && <Cycles key={view.rev} view={view} base={settings.baseMonthly} past={cycles} />}
         {sec === "Activity" && <ActivityLog rows={activity} />}
         {sec === "Data" && <DataSection />}
         {sec === "Account" && <Account view={view} who={who} />}
@@ -84,18 +91,18 @@ function GroupSettings({ view, s }: { view: View; s: Settings }) {
 
 // ── Members: monthly tier, week left, swap, rename ────────────────────────────
 function MemberSettings({ view }: { view: View }) {
-  const [rows, setRows] = useState(() => view.members.map((m) => ({ id: m.id, tier: String(m.tier), left: m.exitWeek ? String(m.exitWeek) : "" })));
+  const [rows, setRows] = useState(() => view.members.map((m) => ({ id: m.id, tier: String(m.tier), left: m.exitWeek ? String(m.exitWeek) : "", phone: m.phone })));
   const [dlg, setDlg] = useState<"swap" | "rename" | null>(null);
   const { run, pending } = useAction();
   const toast = useToast();
-  const set = (id: string, k: "tier" | "left", v: string) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [k]: v } : r)));
+  const set = (id: string, k: "tier" | "left" | "phone", v: string) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [k]: v } : r)));
 
   return (
     <>
-      <SubHead title="Members" text="Edit a member's monthly amount, or enter the week they left the group. Leaving keeps their history and turn; they stop owing after that week." />
+      <SubHead title="Members" text="Edit a member's monthly amount or WhatsApp number, or enter the week they left the group. Leaving keeps their history and turn; they stop owing after that week. With a number saved, reminders and receipts open straight in that member's chat." />
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Member</th><th>Monthly (GHS)</th><th>Left in week</th></tr></thead>
+          <thead><tr><th>Member</th><th>Monthly (GHS)</th><th>WhatsApp number</th><th>Left in week</th></tr></thead>
           <tbody>
             {view.members.map((m, i) => (
               <tr key={m.id}>
@@ -106,6 +113,11 @@ function MemberSettings({ view }: { view: View }) {
                   </div>
                 </td>
                 <td><input className="input" type="number" min={0} step={50} value={rows[i].tier} onChange={(e) => set(m.id, "tier", e.target.value)} aria-label={`${m.name} monthly`} style={{ minWidth: 96 }} /></td>
+                <td>
+                  <input className="input" type="tel" inputMode="tel" autoComplete="off" value={rows[i].phone} placeholder="024 123 4567" maxLength={24}
+                    onChange={(e) => set(m.id, "phone", e.target.value)} aria-label={`${m.name} WhatsApp number`} style={{ minWidth: 140 }}
+                    aria-invalid={!!rows[i].phone.trim() && !waNumber(rows[i].phone)} />
+                </td>
                 <td><input className="input" type="number" min={1} max={view.weeks} step={1} value={rows[i].left} placeholder="Active" onChange={(e) => set(m.id, "left", e.target.value)} aria-label={`${m.name} left in week`} style={{ minWidth: 84 }} /></td>
               </tr>
             ))}
@@ -117,8 +129,10 @@ function MemberSettings({ view }: { view: View }) {
         <button className="btn" onClick={() => setDlg("rename")}><Icon name="edit" />Rename</button>
         <button className="btn primary col-span-2 sm:px-6" disabled={pending} onClick={() => {
           const bad = rows.find((r) => !(Number(r.tier) > 0));
+          const badPhone = rows.find((r) => r.phone.trim() && !waNumber(r.phone));
+          if (badPhone) return toast(`Check ${view.members.find((m) => m.id === badPhone.id)?.name}'s number: use 024 123 4567 or +233 24 123 4567.`, "error");
           if (bad) return toast(`Enter a monthly amount above zero for ${view.members.find((m) => m.id === bad.id)?.name ?? "every member"}.`, "error");
-          run(() => saveMembers(view.rev, rows.map((r) => ({ memberId: r.id, tier: Number(r.tier), exitWeek: r.left.trim() ? Number(r.left) : null }))));
+          run(() => saveMembers(view.rev, rows.map((r) => ({ memberId: r.id, tier: Number(r.tier), exitWeek: r.left.trim() ? Number(r.left) : null, phone: r.phone }))));
         }}>
           {pending ? "Saving…" : "Save changes"}
         </button>
@@ -179,6 +193,100 @@ function RenameDialog({ open, onClose, view }: { open: boolean; onClose: () => v
       <DialogButtons confirm="Rename" pending={pending} onCancel={onClose}
         onConfirm={() => run(() => renameMember(view.rev, id, name), () => { setName(""); onClose(); })} />
     </Dialog>
+  );
+}
+
+// ── Cycles: close the finished cycle and start the next; earlier cycles ───────
+function Cycles({ view, base, past }: { view: View; base: number; past: PastCycle[] }) {
+  const [start, setStart] = useState(view.end);
+  const [amount, setAmount] = useState(String(base));
+  const [dropLeavers, setDropLeavers] = useState(true);
+  const [open, setOpen] = useState(false);
+  const { run, pending } = useAction();
+  const toast = useToast();
+  const leavers = view.members.filter((m) => m.exitWeek != null);
+  const keep = view.members.length - (dropLeavers ? leavers.length : 0);
+
+  const download = async (n: number) => {
+    try {
+      const json = await cycleArchive(n);
+      const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+      Object.assign(document.createElement("a"), { href: url, download: `susu-cycle-${n}.json` }).click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast("That cycle could not be downloaded. Try again.", "error");
+    }
+  };
+
+  return (
+    <>
+      <SubHead title={`Cycle ${view.cycle}`}
+        text={`Runs until ${formatDate(new Date(`${view.end}T00:00:00Z`))}. When it ends (or every turn is paid out), start the next cycle here. This cycle's payments, payouts and receipts are kept below, and the next one starts with a clean sheet and the same members in the same order.`} />
+      {!view.ended ? (
+        <p className="note info"><Icon name="calendar" />You can start the next cycle from {formatDate(new Date(`${view.end}T00:00:00Z`))}, or sooner once every turn is paid out.</p>
+      ) : (
+        <>
+          <div className="form-grid">
+            <label className="field"><span>Next cycle starts</span><input className="input" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+            <label className="field"><span>Monthly contribution (GHS)</span><input className="input" type="number" min={0} step={50} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
+          </div>
+          {leavers.length > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={dropLeavers} onChange={(e) => setDropLeavers(e.target.checked)} />
+              Leave out members who left ({leavers.map((m) => m.name).join(", ")})
+            </label>
+          )}
+          <div className="flex justify-end">
+            <button className="btn primary w-full sm:w-auto sm:px-6" onClick={() => {
+              if (!parseIsoDay(start)) return toast("Enter a valid start date.", "error");
+              if (!(Number(amount) > 0)) return toast("Enter a monthly contribution above zero.", "error");
+              setOpen(true);
+            }}>Start cycle {view.cycle + 1}</button>
+          </div>
+        </>
+      )}
+      <Dialog open={open} onClose={() => setOpen(false)} title={`Close cycle ${view.cycle}?`}>
+        <ul>
+          <li>Cycle {view.cycle + 1} starts {start} with {keep} members at GHS {fmtNum(amount)} a month.</li>
+          <li>Cycle {view.cycle} is saved under Earlier cycles, with every payment and payout, and can be downloaded.</li>
+          {view.cashHeld > 0.005 && <li>GHS {fmtNum(view.cashHeld)} is still in hand (admin fees or extra payments). It is noted in the closed cycle and doesn&apos;t carry over.</li>}
+          {view.gap > 0.005 && <li>GHS {fmtNum(view.gap)} is still owed. It is noted in the closed cycle and doesn&apos;t carry over.</li>}
+          <li>Members on their own monthly amount keep it. You can change the order under Group before the first payout.</li>
+        </ul>
+        <DialogButtons confirm={`Start cycle ${view.cycle + 1}`} pending={pending} onCancel={() => setOpen(false)}
+          onConfirm={() => run(() => startNewCycle(view.rev, { startDate: start, baseMonthly: Number(amount), dropLeavers }), () => setOpen(false))} />
+      </Dialog>
+
+      {past.length > 0 && (
+        <>
+          <SubHead title="Earlier cycles" />
+          {past.map((c) => (
+            <details key={c.number} className="rounded-2xl bg-subtle p-3.5">
+              <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
+                <span className="font-semibold">Cycle {c.number} · {c.start} to {c.end}</span>
+                <span className="num text-xs text-muted">collected GHS {fmtNum(c.collected)} · paid out GHS {fmtNum(c.paidOut)}</span>
+              </summary>
+              <div className="table-wrap mt-3">
+                <table className="table">
+                  <thead><tr><th>Member</th><th>Paid in</th><th>Owing</th><th>Received</th></tr></thead>
+                  <tbody>
+                    {c.rows.map((r) => (
+                      <tr key={r.name}>
+                        <td>{r.name}</td><td className="num">GHS {fmtNum(r.paid)}</td>
+                        <td className={`num${r.owing > 0 ? " text-out" : ""}`}>GHS {fmtNum(r.owing)}</td>
+                        <td className="num">GHS {fmtNum(r.received)} of {fmtNum(r.pool)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="caption mt-2">Closed {c.closed} by {c.by}. In hand at closing: GHS {fmtNum(c.cashHeld)}; outstanding: GHS {fmtNum(c.outstanding)}.</p>
+              <button className="btn mt-2" onClick={() => download(c.number)}><Icon name="download" />Download all records (.json)</button>
+            </details>
+          ))}
+        </>
+      )}
+    </>
   );
 }
 

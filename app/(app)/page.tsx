@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { loadGroup } from "@/lib/data";
-import { EPS, dayDiff, fmtNum, formatShort, money, plural } from "@/lib/format";
+import { EPS, dayDiff, fmtNum, formatDate, formatShort, money, plural, waLink, waNumber } from "@/lib/format";
+import { memberReminder } from "@/lib/messages";
 import { CountCashButton } from "@/components/CountCash";
 import { Icon } from "@/components/icons";
 import { Avatar, Bar, Kpi, PageHead, Pill } from "@/components/ui";
@@ -76,6 +77,16 @@ export default async function OverviewPage() {
         </div>
       </section>
 
+      {g.ended && (
+        <div className="note ok">
+          <Icon name="check" />
+          <span>
+            Cycle {g.rec.settings.cycle} {dayDiff(g.today, g.end) >= 0 ? `ended on ${formatDate(g.end)}` : "has every turn paid out"}.{" "}
+            <Link href="/settings?section=Cycles" className="font-semibold underline">Start the next cycle</Link> when you are ready.
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Kpi label="Outstanding" value={`GHS ${fmtNum(g.gap)}`} tone={g.gap > EPS ? "out" : undefined} icon={<Icon name="warning" />}
           foot={owing.length ? `${plural(owing.length, "member")} behind` : `Everyone paid to week ${g.week}`} />
@@ -101,6 +112,10 @@ export default async function OverviewPage() {
                 <div className="text-xs text-muted">{r.streak >= 2 ? `${r.streak} weeks behind` : "Behind this week"}</div>
               </div>
               <span className="num text-sm font-semibold text-out">GHS {fmtNum(r.owing)}</span>
+              <a className="btn !min-h-9 !px-3 text-[13px]" href={waLink(g.member(r.id)?.phone, memberReminder(g, r.id))} target="_blank"
+                rel="noopener noreferrer" title={waNumber(g.member(r.id)?.phone) ? `WhatsApp ${r.member}` : "No phone saved: pick the chat in WhatsApp"}>
+                <Icon name="chat" />Remind
+              </a>
             </div>
           ))}
           {payoutShort && (

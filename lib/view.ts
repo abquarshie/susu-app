@@ -3,7 +3,7 @@ import { formatShort } from "./format";
 import type { Group, PaymentRec, PayoutRec } from "./model";
 
 export type MemberView = {
-  id: string; name: string; turn: number; weekly: number; tier: number; exitWeek: number | null;
+  id: string; name: string; turn: number; weekly: number; tier: number; exitWeek: number | null; phone: string;
   amounts: number[]; // index w-1 → completed amount for week w
 };
 export type TurnView = {
@@ -12,6 +12,7 @@ export type TurnView = {
 };
 export type View = {
   rev: number; week: number; weeks: number; n: number; cashHeld: number; base: number; today: string;
+  cycle: number; end: string; ended: boolean; gap: number;
   members: MemberView[]; turns: TurnView[]; nextTurn: number | null;
 };
 
@@ -20,8 +21,9 @@ export function toView(g: Group): View {
   return {
     rev: g.rec.settings.rev, week: g.week, weeks: g.weeks, n: g.n, cashHeld: g.cashHeld, base: g.base,
     today: g.today.toISOString().slice(0, 10),
+    cycle: g.rec.settings.cycle, end: g.end.toISOString().slice(0, 10), ended: g.ended, gap: g.gap,
     members: g.members.map((m) => ({
-      id: m.id, name: m.name, turn: m.position + 1, weekly: g.weekly(m), tier: g.tier(m), exitWeek: m.exitWeek,
+      id: m.id, name: m.name, turn: m.position + 1, weekly: g.weekly(m), tier: g.tier(m), exitWeek: m.exitWeek, phone: m.phone,
       amounts: Array.from({ length: g.weeks }, (_, i) => g.paidAmount(m, i + 1)),
     })),
     turns: g.schedule.map((r) => ({

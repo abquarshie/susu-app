@@ -47,7 +47,7 @@ const LEDGER = {
 /** All records in one parallel round trip, or null when the group row doesn't exist yet. */
 async function readRecords(db: Db): Promise<Records | null> {
   const [group, members, payments, payouts, locks] = await Promise.all([
-    db.group.findUnique({ where: { id: 1 }, select: { rev: true, startDate: true, baseMonthly: true, adminFeePct: true } }),
+    db.group.findUnique({ where: { id: 1 }, select: { rev: true, startDate: true, baseMonthly: true, adminFeePct: true, cycle: true } }),
     db.member.findMany({ orderBy: { position: "asc" } }),
     db.payment.findMany({ orderBy: { recordedAt: "desc" }, select: { ...LEDGER, week: true } }),
     db.payout.findMany({ orderBy: { recordedAt: "desc" }, select: { ...LEDGER, turn: true } }),
@@ -57,11 +57,11 @@ async function readRecords(db: Db): Promise<Records | null> {
   return {
     settings: {
       rev: group.rev, startDate: group.startDate.toISOString().slice(0, 10),
-      baseMonthly: money(group.baseMonthly), adminFeePct: Number(group.adminFeePct),
+      baseMonthly: money(group.baseMonthly), adminFeePct: Number(group.adminFeePct), cycle: group.cycle,
     },
     members: members.map((m) => ({
       id: m.id, name: m.name, position: m.position,
-      tier: m.monthlyTier == null ? null : money(m.monthlyTier), exitWeek: m.exitWeek,
+      tier: m.monthlyTier == null ? null : money(m.monthlyTier), exitWeek: m.exitWeek, phone: m.phone,
     })),
     payments: payments.map((p) => ({
       id: p.id, memberId: p.memberId, week: p.week, amount: money(p.amount), paidOn: p.paidOn, method: p.method,

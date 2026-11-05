@@ -19,6 +19,7 @@ model Group {
   baseMonthly    Decimal   @db.Decimal(12, 2)
   adminFeePct    Decimal   @default(0) @db.Decimal(5, 2)
   passcodeHash   String    @default("")
+  cycle          Int       @default(1) // the current cycle's number; earlier ones are in Cycle
   failedAttempts Int       @default(0)
   lockedUntil    DateTime?
   updatedAt      DateTime  @updatedAt
@@ -31,6 +32,7 @@ model Member {
   position    Int       @unique
   monthlyTier Decimal?  @db.Decimal(12, 2) // null means the group's base amount
   exitWeek    Int? // set when the member has left; they stop owing after this week
+  phone       String    @default("") // as entered; WhatsApp links turn 024… into 23324…
   payments    Payment[]
   payouts     Payout[]
   turnLocks   TurnLock[]
@@ -126,4 +128,16 @@ model Activity {
   at     DateTime @default(now())
 
   @@index([at])
+}
+
+/// A finished cycle, closed by "Start a new cycle". Its full records are kept here as JSON
+/// (the same shape as the backup download), and the live tables start again empty.
+model Cycle {
+  number    Int      @id // 1 for the first cycle
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  closedAt  DateTime @default(now())
+  closedBy  String
+  summary   Json
+  data      Json
 }

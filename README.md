@@ -10,7 +10,7 @@ Same pages (Overview, Record, Members, Share, Settings), same rules, same WhatsA
    ```bash
    cp .env.example .env      # fill in DATABASE_URL (pooled), DIRECT_URL (direct), SESSION_SECRET, ADMIN_PASSCODE
    npm install
-   npx prisma db push        # creates the tables in Neon
+   npm run db:migrate        # creates or updates the tables in Neon (prisma/migrations)
    npm run dev               # http://localhost:3000
    ```
    On an empty database the app creates the group with sample members, and `ADMIN_PASSCODE` becomes the passcode.
@@ -31,7 +31,28 @@ Same pages (Overview, Record, Members, Share, Settings), same rules, same WhatsA
 ## Deploy to Vercel
 
 Import the repo, add `DATABASE_URL`, `SESSION_SECRET` and `ADMIN_PASSCODE` as environment variables, and deploy.
-`npm run build` runs `prisma generate` first. Neon's Vercel integration can fill in `DATABASE_URL` for you.
+Neon's Vercel integration can fill in `DATABASE_URL` for you. Also add:
+
+- `DIRECT_URL`: Neon's direct (unpooled) connection string, used for migrations. If it's missing,
+  `DATABASE_URL_UNPOOLED` (set by the Neon integration) or `DATABASE_URL` is used.
+- `CRON_SECRET`: any long random string. Vercel sends it with the daily job in `vercel.json`, which saves each
+  week's opening cash for the "+GHS this week" figure on Overview.
+
+`npm run build` runs `prisma generate`, then `scripts/migrate.mjs`, then `next build`. On **production** builds only,
+the migrate step applies any new files in `prisma/migrations`, so a merged schema change reaches the database before
+the new code goes live. Preview builds never touch the database. The first time it runs it records `0_init` as already
+applied, because the tables were made with `db push` before this repo had migrations.
+
+## Changing the tables
+
+Edit `prisma/schema.prisma`, then add a migration with
+`npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script > prisma/migrations/<n>_<name>/migration.sql`,
+check the SQL, and merge. Never run `prisma db push` against Neon.
+
+## Backups
+
+`.github/workflows/backup.yml` saves a full copy of the database every night, kept for 30 days on the workflow's run
+page. It needs one GitHub secret, `BACKUP_DATABASE_URL` (Neon's direct connection string); the file says where to add it.
 
 ## How it fits together
 
@@ -51,4 +72,8 @@ Import the repo, add `DATABASE_URL`, `SESSION_SECRET` and `ADMIN_PASSCODE` as en
 - **Backups**: the backups worksheet is gone. Each save is a single Postgres transaction, Neon keeps restore history
   (length depends on plan), and Settings → Data downloads a full JSON copy.
 - **Rename** is a one-row update, because records point at member IDs rather than names.
+- **Cycles**: Settings → Cycles closes a finished cycle and starts the next with the same members. The closed cycle
+  is kept in the `Cycle` table as JSON (summary plus every record) and can be downloaded from the same screen.
+- **WhatsApp numbers**: saved per member under Settings → Members. Reminders on Overview and Share, and receipts on
+  Share, then open straight in that member's chat.
 - **Sign-in lockout** (5 tries, 60 s) is stored in the database, so it holds across devices and server restarts.

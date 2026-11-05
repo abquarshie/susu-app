@@ -8,7 +8,9 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { commit, Refused, type ActionResult } from "@/lib/commit";
 import { prisma } from "@/lib/db";
 import { currentAdmin, ensureGroup, loadRecords } from "@/lib/data";
-import { EPS, fmtNum, formatDate, formatPlain, isoDay, METHODS, money, newId, parseIsoDay, parseNames, plural } from "@/lib/format";
+import {
+  cleanPhone, dayDiff, EPS, fmtNum, formatDate, formatPlain, isoDay, METHODS, money, newId, parseIsoDay, parseNames, plural, splitPayment, weekList,
+} from "@/lib/format";
 import { memberListProblems, orderChanges, type Group } from "@/lib/model";
 import { checkPw, hashPw, isScryptHash } from "@/lib/password";
 import { COOKIE, cookieOptions, signSession } from "@/lib/session";
@@ -152,26 +154,38 @@ export async function saveWeek(rev: number, input: { week: number; method: strin
 }
 
 // ══ Record: single payment ════════════════════════════════════════════════════
-export async function savePayment(rev: number, input: { memberId: string; week: number; amount: number; method: string; reference: string; date: string }) {
+export async function savePayment(rev: number, input: {
+  memberId: string; week: number; amount: number; method: string; reference: string; date: string; carry?: boolean;
+}) {
   return guard(async () => {
     const amount = money(num(input.amount, "Amount"));
     if (amount <= 0) throw new Refused("Enter an amount greater than zero.");
     const d = formatPlain(day(input.date));
     const ref = text(input.reference, 120), meth = method(input.method);
-    let name = "";
+    let name = "", parts = 1;
     const res = await commit(rev, "", async ({ tx, g, who }) => {
       const m = memberOf(g, input.memberId);
       const wk = int(input.week, "Week", 1, g.weeks);
       name = m.name;
-      const id = newId("PAY");
-      await tx.payment.create({ data: { id, memberId: m.id, week: wk, amount, paidOn: d, method: meth, reference: ref, recordedBy: who } });
-      const banked = money(g.paidAmount(m, wk) + amount);
+      // more than the week needs: fill the following weeks too, so the grid and streak show what was really paid
+      const split = splitPayment(amount, wk, g.exitWeek(m), g.weekly(m), (w) => g.paidAmount(m, w), input.carry !== false);
+      parts = split.length;
+      const weeks = weekList(split.map((x) => x.week));
+      const note = parts > 1 ? `GHS ${fmtNum(amount)} paid together for weeks ${weeks}` : "";
+      const detail = [`method: ${meth}`, `reference: ${ref || "—"}`];
+      for (const part of split) {
+        const id = newId("PAY");
+        const reference = [ref, note].filter(Boolean).join(" · ").slice(0, 200);
+        await tx.payment.create({ data: { id, memberId: m.id, week: part.week, amount: part.amount, paidOn: d, method: meth, reference, recordedBy: who } });
+        const banked = money(g.paidAmount(m, part.week) + part.amount);
+        detail.push(`week ${pad(part.week)}: GHS ${fmtNum(part.amount)} (banked GHS ${fmtNum(banked)} of ${fmtNum(g.weekly(m))}) · receipt ${id}`);
+      }
       return {
-        type: "payment", text: `Payment received: ${m.name} · Week ${pad(wk)} · GHS ${fmtNum(amount)}`,
-        detail: [`method: ${meth}`, `reference: ${ref || "—"}`, `banked for the week: GHS ${fmtNum(banked)} of ${fmtNum(g.weekly(m))}`, `receipt: ${id}`],
+        type: "payment", text: `Payment received: ${m.name} · Week${parts > 1 ? "s" : ""} ${weeks} · GHS ${fmtNum(amount)}`, detail,
       };
     });
-    return res.ok ? { ...res, message: `Payment saved for ${name}. Its receipt is under Share.` } : res;
+    const where = parts > 1 ? `It was spread over ${parts} weeks; the receipts are under Share.` : "Its receipt is under Share.";
+    return res.ok ? { ...res, message: `Payment saved for ${name}. ${where}` } : res;
   });
 }
 
@@ -323,7 +337,7 @@ export async function saveSettings(rev: number, input: { startDate: string; base
 }
 
 // ══ Settings: members (tiers, exits, rename, swap) ════════════════════════════
-export async function saveMembers(rev: number, rows: { memberId: string; tier: number; exitWeek: number | null }[]) {
+export async function saveMembers(rev: number, rows: { memberId: string; tier: number; exitWeek: number | null; phone?: string }[]) {
   return guard(async () => commit(rev, "Member details saved", async ({ tx, g }) => {
     if (!Array.isArray(rows)) throw new Refused("The request was not valid. Reload the page and try again.");
     const detail: string[] = [];
@@ -332,7 +346,12 @@ export async function saveMembers(rev: number, rows: { memberId: string; tier: n
       const tier = money(num(row.tier, `${m.name}'s monthly amount`));
       if (tier <= 0) throw new Refused(`${m.name}'s monthly amount must be more than zero.`);
       const exit = row.exitWeek == null ? null : int(row.exitWeek, `${m.name}'s leaving week`, 1, g.weeks);
-      const data: { monthlyTier?: number | null; exitWeek?: number | null } = {};
+      const phone = row.phone === undefined ? m.phone : cleanPhone(row.phone);
+      const data: { monthlyTier?: number | null; exitWeek?: number | null; phone?: string } = {};
+      if (phone !== m.phone) {
+        data.phone = phone;
+        detail.push(phone ? `${m.name}: phone ${phone}` : `${m.name}: phone removed`);
+      }
       if (Math.abs(tier - g.tier(m)) > EPS) {
         data.monthlyTier = tier;
         detail.push(`${m.name}: monthly GHS ${fmtNum(g.tier(m))} → GHS ${fmtNum(tier)}`);
@@ -407,11 +426,84 @@ export async function changePasscode(rev: number, input: { current: string; next
 /** Full JSON copy of the group, for the Download backup button. The passcode hash is left out. */
 export async function exportData(): Promise<string> {
   await currentAdmin();
-  const [rec, activity, reconciliations, snapshots] = await Promise.all([
+  const [rec, activity, reconciliations, snapshots, cycles] = await Promise.all([
     loadRecords(),
     prisma.activity.findMany({ orderBy: { at: "desc" } }),
     prisma.reconciliation.findMany({ orderBy: { countedAt: "desc" } }),
     prisma.snapshot.findMany({ orderBy: { week: "asc" } }),
+    prisma.cycle.findMany({ orderBy: { number: "asc" } }),
   ]);
-  return JSON.stringify({ exportedAt: new Date().toISOString(), ...rec, activity, reconciliations, snapshots }, null, 2);
+  return JSON.stringify({ exportedAt: new Date().toISOString(), ...rec, activity, reconciliations, snapshots, earlierCycles: cycles }, null, 2);
+}
+
+// ══ Settings: close this cycle and start the next ═════════════════════════════
+export type CycleSummary = {
+  number: number; start: string; end: string; members: number; collected: number; paidOut: number; cashHeld: number;
+  outstanding: number; rows: { name: string; paid: number; owing: number; received: number; pool: number }[];
+};
+
+/**
+ * Keeps the finished cycle as one Cycle row (its summary plus every record, the same shape as the backup download),
+ * then empties the payment, payout, lock, snapshot and cash-count tables and starts the next cycle with the same
+ * members in the same order. Only allowed once the cycle's end date has come or every turn has been paid out.
+ */
+export async function startNewCycle(rev: number, input: { startDate: string; baseMonthly: number; dropLeavers: boolean }) {
+  return guard(async () => {
+    const start = day(input.startDate);
+    const base = money(num(input.baseMonthly, "Monthly contribution"));
+    if (base <= 0) throw new Refused("The monthly contribution must be more than zero.");
+    let msg = "";
+    const res = await commit(rev, "", async ({ tx, g, who }) => {
+      const allPaid = g.schedule.every((r) => r.done);
+      if (dayDiff(g.today, g.end) < 0 && !allPaid)
+        throw new Refused(`This cycle runs until ${formatDate(g.end)} and not every turn has been paid out, so it can't be closed yet.`);
+      if (isoDay(start) <= g.rec.settings.startDate) throw new Refused("The new cycle must start after the current one started.");
+      const keep = g.members.filter((m) => !(input.dropLeavers && g.exited(m)));
+      if (keep.length < 2) throw new Refused("A new cycle needs at least two members.");
+
+      const number = g.rec.settings.cycle;
+      const [reconciliations, snapshots] = await Promise.all([
+        tx.reconciliation.findMany({ orderBy: { countedAt: "desc" } }),
+        tx.snapshot.findMany({ orderBy: { week: "asc" } }),
+      ]);
+      const summary: CycleSummary = {
+        number, start: g.rec.settings.startDate, end: isoDay(g.end), members: g.n,
+        collected: g.collected, paidOut: g.paidOut, cashHeld: g.cashHeld, outstanding: g.gap,
+        rows: g.rows.map((r, i) => ({
+          name: r.member, paid: r.paidTotal, owing: r.owing, received: g.schedule[i].collected, pool: g.schedule[i].net,
+        })),
+      };
+      const data = JSON.parse(JSON.stringify({ closedAt: new Date().toISOString(), ...g.rec, reconciliations, snapshots }));
+      await tx.cycle.create({ data: { number, startDate: new Date(`${summary.start}T00:00:00Z`), endDate: g.end, closedBy: who, summary, data } });
+
+      await tx.payout.deleteMany({});
+      await tx.turnLock.deleteMany({});
+      await tx.payment.deleteMany({});
+      await tx.snapshot.deleteMany({});
+      await tx.reconciliation.deleteMany({});
+      const leavers = g.members.filter((m) => !keep.includes(m));
+      for (const m of g.members) await tx.member.update({ where: { id: m.id }, data: { position: -1 - m.position } });
+      for (const m of leavers) await tx.member.delete({ where: { id: m.id } });
+      for (const [position, m] of keep.entries()) await tx.member.update({ where: { id: m.id }, data: { position, exitWeek: null } });
+      await tx.group.update({ where: { id: 1 }, data: { startDate: start, baseMonthly: base, cycle: number + 1 } });
+
+      msg = `Cycle ${number} closed. Cycle ${number + 1} starts ${formatDate(start)}.`;
+      const detail = [
+        `cycle ${number}: ${summary.start} → ${summary.end}, collected GHS ${fmtNum(g.collected)}, paid out GHS ${fmtNum(g.paidOut)}`,
+        `left in hand at closing: GHS ${fmtNum(g.cashHeld)}; outstanding: GHS ${fmtNum(g.gap)}`,
+        `new start ${isoDay(start)}, monthly GHS ${fmtNum(base)}, ${plural(keep.length, "member")}`,
+      ];
+      if (leavers.length) detail.push(`left the group: ${leavers.map((m) => m.name).join(", ")}`);
+      return { type: "setting", text: `Cycle ${number} closed, cycle ${number + 1} started`, detail };
+    });
+    return res.ok ? { ...res, message: msg } : res;
+  });
+}
+
+/** One closed cycle's full records as JSON, for its Download button. */
+export async function cycleArchive(number: number): Promise<string> {
+  await currentAdmin();
+  const c = await prisma.cycle.findUnique({ where: { number: Math.trunc(Number(number)) } });
+  if (!c) throw new Error("That cycle was not found.");
+  return JSON.stringify({ cycle: c.number, closedBy: c.closedBy, summary: c.summary, ...(c.data as object) }, null, 2);
 }

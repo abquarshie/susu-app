@@ -2,8 +2,9 @@
 import { useState } from "react";
 import { Icon } from "./icons";
 import { useToast } from "./Toaster";
+import { waLink, waNumber } from "@/lib/format";
 
-export type Message = { group: string; label: string; text: string; file: string };
+export type Message = { group: string; label: string; text: string; file: string; phone?: string; to?: string };
 
 export function SharePanel({ messages }: { messages: Message[] }) {
   const groups = [...new Set(messages.map((m) => m.group))];
@@ -12,7 +13,8 @@ export function SharePanel({ messages }: { messages: Message[] }) {
   const [idx, setIdx] = useState(0);
   const msg = items[Math.min(idx, items.length - 1)];
   const toast = useToast();
-  const wa = `https://wa.me/?text=${encodeURIComponent(msg.text)}`;
+  const wa = waLink("", msg.text);
+  const direct = waNumber(msg.phone) ? waLink(msg.phone, msg.text) : "";
 
   const copy = async () => {
     try {
@@ -44,14 +46,17 @@ export function SharePanel({ messages }: { messages: Message[] }) {
           </div>
         </div>
         {items.length > 1 && (
-          <label className="field"><span>Receipt</span>
+          <label className="field"><span>{group === "Personal reminder" ? "Member" : "Receipt"}</span>
             <select className="input" value={idx} onChange={(e) => setIdx(Number(e.target.value))}>
               {items.map((m, i) => <option key={m.file} value={i}>{m.label}</option>)}
             </select>
           </label>
         )}
         <div className="grid gap-2">
-          <button className="btn primary big" onClick={copy}><Icon name="copy" />Copy message</button>
+          {direct && direct.length <= 1900 && (
+            <a className="btn primary big" href={direct} target="_blank" rel="noopener noreferrer"><Icon name="chat" />Send to {msg.to ?? "member"}</a>
+          )}
+          <button className={`btn big${direct ? "" : " primary"}`} onClick={copy}><Icon name="copy" />Copy message</button>
           <div className="grid grid-cols-2 gap-2">
             {wa.length <= 1900
               ? <a className="btn" href={wa} target="_blank" rel="noopener noreferrer"><Icon name="chat" />WhatsApp</a>

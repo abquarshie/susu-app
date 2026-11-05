@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { correctPayment, reversePayout, savePayment, savePayout, saveWeek } from "@/app/actions";
-import { EPS, METHODS, fmtNum, formatDate, isoDay, money, parseDisplayDate, parseIsoDay } from "@/lib/format";
+import { EPS, METHODS, fmtNum, formatDate, isoDay, money, parseDisplayDate, parseIsoDay, splitPayment, weekList } from "@/lib/format";
 import type { MemberView, PaymentView, PayoutView, View } from "@/lib/view";
 import { Dialog, DialogButtons } from "./Dialog";
 import { Icon } from "./icons";
@@ -150,8 +150,11 @@ function PaymentFields({ view, member, week, suggested }: { view: View; member: 
   const [method, setMethod] = useState<string>("Cash");
   const [reference, setReference] = useState("");
   const [date, setDate] = useState(view.today);
+  const [carry, setCarry] = useState(true);
   const { run, pending } = useAction();
   const toast = useToast();
+  const last = Math.min(view.weeks, member.exitWeek ?? view.weeks);
+  const split = Number(amount) > 0 ? splitPayment(Number(amount), week, last, member.weekly, (w) => paidAmt(member, w), carry) : [];
   return (
     <>
       <div className="form-grid">
@@ -161,9 +164,19 @@ function PaymentFields({ view, member, week, suggested }: { view: View; member: 
         <label className="field"><span>Reference</span><input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" maxLength={120} /></label>
         <label className="field"><span>Date</span><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
       </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} />
+        Carry anything above this week&apos;s amount into the following weeks
+      </label>
+      {split.length > 1 && (
+        <p className="note info">
+          <Icon name="calendar" />
+          <span>Covers weeks {weekList(split.map((x) => x.week))}: {split.map((x) => `wk ${x.week} GHS ${fmtNum(x.amount)}`).join(", ")}. Each week gets its own receipt.</span>
+        </p>
+      )}
       <button className="btn primary big wide" disabled={pending} onClick={() => {
         if (!(Number(amount) > 0)) return toast("Enter an amount greater than zero.", "error");
-        run(() => savePayment(view.rev, { memberId: member.id, week, amount: Number(amount), method, reference, date }));
+        run(() => savePayment(view.rev, { memberId: member.id, week, amount: Number(amount), method, reference, date, carry }));
       }}>{pending ? "Saving…" : "Save payment"}</button>
     </>
   );

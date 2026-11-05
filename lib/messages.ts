@@ -74,3 +74,15 @@ export function payoutReceiptText(p: PayoutRec, recipient: string): string {
     `Amount: *GHS ${fmtNum(p.amount)}*\nMethod: ${p.method || "—"}\nReference: ${p.reference || "—"}\n` +
     `Date: ${p.paidOn || "—"}\nRecorded by: ${p.recordedBy || "—"}\nReceipt ID: ${p.id}`;
 }
+
+/** A personal reminder for one member who is behind, sent straight to their WhatsApp. */
+export function memberReminder(g: Group, memberId: string): string {
+  const r = g.rows.find((x) => x.id === memberId);
+  if (!r) return "";
+  const first = r.member.split(" ")[0];
+  const behind = r.streak >= 2 ? ` (${r.streak} weeks)` : "";
+  let out = `Hi ${first} 👋 A friendly reminder from the susu: you have *GHS ${fmtNum(r.owing)}* outstanding${behind} up to week ${g.week}.`;
+  out += ` Your weekly contribution is GHS ${fmtNum(r.weekly)}.`;
+  if (g.nextByDate) out += `\n\n🎁 Next payout: ${g.nextByDate.recipient} on ${g.nextByDate.dateS}.`;
+  return out + "\n\nThank you 🙏";
+}
