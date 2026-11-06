@@ -4,6 +4,7 @@ import { formatShort } from "@/lib/format";
 import { Icon } from "@/components/icons";
 import { SideNav, TabBar } from "@/components/Nav";
 import { Avatar, Bar } from "@/components/ui";
+import { WhatsNew } from "@/components/WhatsNew";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main className="mx-auto w-full max-w-6xl px-4 pt-5 pb-28 md:px-8 md:pt-9 md:pb-16">{children}</main>
       </div>
       <TabBar />
+      <WhatsNew />
     </div>
   );
 }

@@ -77,3 +77,7 @@ page. It needs one GitHub secret, `BACKUP_DATABASE_URL` (Neon's direct connectio
 - **WhatsApp numbers**: saved per member under Settings → Members. Reminders on Overview and Share, and receipts on
   Share, then open straight in that member's chat.
 - **Sign-in lockout** (5 tries, 60 s) is stored in the database, so it holds across devices and server restarts.
+
+## What's new
+
+When the app opens after an update, a "What's new" card lists the changes once on each phone or computer. Every pull request that changes something people will notice adds an entry at the top of `lib/whats-new.ts` with the next id, the date and a few plain sentences.
