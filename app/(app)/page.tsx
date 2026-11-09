@@ -164,8 +164,18 @@ export default async function OverviewPage() {
                     </div>
                   </div>
                   <div className="flex-none text-right">
-                    <div className="num text-sm font-semibold">GHS {fmtNum(r.net)}</div>
-                    <div className="text-xs text-muted">{formatShort(r.date)}</div>
+                    {/* part paid: just what is still to pay them */}
+                    {!r.done && r.collected > 0 ? (
+                      <>
+                        <div className="num text-sm font-semibold text-warn">GHS {fmtNum(r.remaining)}</div>
+                        <div className="text-xs text-muted">left to pay · {formatShort(r.date)}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="num text-sm font-semibold">GHS {fmtNum(r.net)}</div>
+                        <div className="text-xs text-muted">{formatShort(r.date)}</div>
+                      </>
+                    )}
                   </div>
                 </li>
               );
